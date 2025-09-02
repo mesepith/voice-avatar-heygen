@@ -64,7 +64,10 @@ wss.on('connection', (ws) => {
           encoding: 'LINEAR16',
           sampleRateHertz: 16000,
           languageCode: 'en-US',
+          alternativeLanguageCodes: ['hi-IN'], // <-- THE FIX IS HERE!
           enableAutomaticPunctuation: true,
+          model: 'telephony', // Often improves accuracy for conversations
+          useEnhanced: true,    // Use Google's enhanced models
         },
         interimResults: true,
       })
@@ -103,12 +106,19 @@ You must always output a JSON object with a "speech_text" key containing your sp
   ];
 
   try {
+    console.log('------- start to send open ai -------');
     const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-4o",
       response_format: { type: "json_object" },
       messages, // <-- Use the full message history
       temperature: 0.7,
+    },{ // <-- NEW -- Add configuration object for timeout and retries
+      timeout: 30000, // 20 seconds
+      maxRetries: 1,
     });
+  
+
+    console.log('------- end to send open ai -------');
 
     const replyJson = JSON.parse(response.choices[0].message.content);
     console.log(`<<< Received from OpenAI:`, replyJson);
