@@ -1,18 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { Room, RoomEvent } from "livekit-client";
 
-// Helper to manage microphone audio processing (Unchanged)
+// --- MODIFIED HELPER ---
+// Now accepts a mediaStream instead of creating its own
 const createAudioStreamer = (onAudio) => {
   let audioContext;
   let processor;
   let source;
-  let stream;
+  let stream; // This will be the stream passed to start()
 
-  const start = async () => {
+  const start = async (mediaStream) => {
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true },
-      });
+      // Use the provided stream
+      stream = mediaStream;
       audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
       source = audioContext.createMediaStreamSource(stream);
       processor = audioContext.createScriptProcessor(4096, 1, 1);
@@ -27,12 +27,12 @@ const createAudioStreamer = (onAudio) => {
       source.connect(processor);
       processor.connect(audioContext.destination);
     } catch (error) {
-        console.error("Error getting microphone audio:", error);
-        alert("Could not access the microphone. Please grant permission and refresh.");
+        console.error("Error setting up audio processing:", error);
     }
   };
+
   const stop = () => {
-    if (stream) stream.getTracks().forEach(track => track.stop());
+    // We no longer stop the tracks here, as the component that created the stream is responsible for it.
     if (source) source.disconnect();
     if (processor) processor.disconnect();
     if (audioContext && audioContext.state !== 'closed') audioContext.close();
@@ -46,6 +46,11 @@ export default function App() {
   const [aiText, setAiText] = useState("");
   const [status, setStatus] = useState("Initializing...");
   
+  // --- NEW REFS for user video and stream ---
+  const userVideoRef = useRef(null);
+  const userStreamRef = useRef(null);
+  // ---
+  
   const videoRef = useRef(null);
   const sessionDataRef = useRef(null);
 
@@ -56,6 +61,20 @@ export default function App() {
 
     const setup = async () => {
       try {
+        // --- NEW: Get camera and mic access first ---
+        setStatus("Waiting for camera/mic permission...");
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true },
+          video: true // Request video access
+        });
+        userStreamRef.current = stream;
+
+        // Attach user's video stream to the video element
+        if (userVideoRef.current) {
+          userVideoRef.current.srcObject = stream;
+        }
+        // --- END NEW ---
+
         setStatus("Creating HeyGen session...");
         const sessionRes = await fetch("http://localhost:8787/api/heygen/session", {
           method: "POST", headers: { "Content-Type": "application/json" },
@@ -72,7 +91,7 @@ export default function App() {
           videoRef.current?.appendChild(el);
         });
         
-        setStatus("Connecting to microphone...");
+        setStatus("Connecting to backend...");
         ws = new WebSocket(`ws://localhost:8787`);
         let accumulatedFinalTranscript = "";
 
@@ -80,8 +99,13 @@ export default function App() {
           audioStreamer = createAudioStreamer((audioChunk) => {
             if (ws?.readyState === WebSocket.OPEN) ws.send(audioChunk);
           });
-          audioStreamer.start();
-          setStatus("Listening...");
+          // --- MODIFIED: Pass the stream to the audio streamer ---
+          if (userStreamRef.current) {
+            audioStreamer.start(userStreamRef.current);
+            setStatus("Listening...");
+          } else {
+            throw new Error("User media stream not available.");
+          }
         };
 
         ws.onmessage = (event) => {
@@ -89,11 +113,7 @@ export default function App() {
           if (data.results && data.results.length > 0) {
             const result = data.results[0];
             const transcript = result.alternatives[0].transcript;
-
-            // --- THE ONLY CHANGE IS HERE ---
-            // It's `result.isFinal` (camelCase), not `result.is_final`
-            console.log(`Received transcript: "${transcript}", isFinal: ${result.isFinal}`);
-
+            
             if (result.isFinal) {
               accumulatedFinalTranscript += " " + transcript;
               setFinalTranscript(accumulatedFinalTranscript.trim());
@@ -113,7 +133,12 @@ export default function App() {
 
       } catch (error) {
         console.error("Setup failed:", error);
-        setStatus(`Error: ${error.message}`);
+        if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+             alert("Could not access the microphone and camera. Please grant permission and refresh.");
+             setStatus("Permission denied. Please refresh and allow access.");
+        } else {
+            setStatus(`Error: ${error.message}`);
+        }
       }
     };
 
@@ -121,6 +146,11 @@ export default function App() {
 
     return () => {
       console.log("Running cleanup...");
+      // --- NEW: Stop user media tracks (turns off camera light) ---
+      if (userStreamRef.current) {
+        userStreamRef.current.getTracks().forEach(track => track.stop());
+      }
+      // ---
       if (ws) ws.close();
       if (audioStreamer) audioStreamer.stop();
       if (room) room.disconnect();
@@ -155,10 +185,48 @@ export default function App() {
   }
 
   const isListening = status === "Listening...";
+  
+  // --- NEW: CSS Styles for the video layout ---
+  const videoContainerStyle = {
+    position: 'relative',
+    width: "100%",
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#000',
+    aspectRatio: '16 / 9'
+  };
+
+  const userVideoStyle = {
+    position: 'absolute',
+    bottom: '20px',
+    right: '20px',
+    width: '25%', // Adjust size as needed
+    maxWidth: '280px',
+    borderRadius: '8px',
+    border: '2px solid rgba(255, 255, 255, 0.5)',
+    boxShadow: '0 4px 15px rgba(0,0,0,0.3)',
+    transform: 'scaleX(-1)', // Mirror the video for a natural feel
+    zIndex: 10,
+  };
+  // ---
+
   return (
     <div style={{ display:"grid", gap:12, padding:16, maxWidth:900, margin:"0 auto", fontFamily:'sans-serif' }}>
-      <h2>HeyGen + AI (Google Streaming STT Backend)</h2>
-      <div ref={videoRef} style={{ width:"100%", borderRadius:12, overflow:'hidden', backgroundColor:'#000', minHeight: '506px' }} />
+      <h2>HeyGen + AI (Google Meet Style)</h2>
+
+      {/* --- MODIFIED: Video container now holds both AI and user videos --- */}
+      <div style={videoContainerStyle}>
+        <div ref={videoRef} style={{ width: "100%", height: "100%" }} />
+        <video 
+          ref={userVideoRef} 
+          style={userVideoStyle}
+          autoPlay 
+          muted 
+          playsInline
+        />
+      </div>
+      {/* --- END MODIFICATION --- */}
+
       <div style={{ display:"flex", gap:12, alignItems: "center" }}>
         <div style={{
             width: 20, height: 20,
