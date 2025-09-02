@@ -1,3 +1,5 @@
 server/api-keys/*
 server/.env
 server/.DS_Store
+client/.env.development
+client/.env.production

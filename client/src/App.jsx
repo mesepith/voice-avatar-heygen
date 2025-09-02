@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Room, RoomEvent } from "livekit-client";
 
+// --- NEW --- Environment-aware API URLs
+// Vite exposes env variables through `import.meta.env`
+// VITE_ prefix is required for them to be exposed to the browser.
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787';
+const WS_URL = API_BASE_URL.replace(/^http/, 'ws');
+
+
 // --- MODIFIED HELPER ---
 // Now accepts a mediaStream instead of creating its own
 const createAudioStreamer = (onAudio) => {
@@ -76,7 +83,8 @@ export default function App() {
         // --- END NEW ---
 
         setStatus("Creating HeyGen session...");
-        const sessionRes = await fetch("http://localhost:8787/api/heygen/session", {
+        // --- MODIFIED: Use dynamic API_BASE_URL ---
+        const sessionRes = await fetch(`${API_BASE_URL}/api/heygen/session`, {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ avatar_id: "Marianne_CasualLook_public" }),
         });
@@ -92,7 +100,8 @@ export default function App() {
         });
         
         setStatus("Connecting to backend...");
-        ws = new WebSocket(`ws://localhost:8787`);
+        // --- MODIFIED: Use dynamic WS_URL ---
+        ws = new WebSocket(WS_URL);
         let accumulatedFinalTranscript = "";
 
         ws.onopen = () => {
@@ -156,7 +165,8 @@ export default function App() {
       if (room) room.disconnect();
       if (sessionDataRef.current?.session_id) {
         const payload = JSON.stringify({ session_id: sessionDataRef.current.session_id });
-        navigator.sendBeacon("http://localhost:8787/api/heygen/stop", payload);
+        // --- MODIFIED: Use dynamic API_BASE_URL for beacon ---
+        navigator.sendBeacon(`${API_BASE_URL}/api/heygen/stop`, payload);
       }
     };
   }, []);
@@ -165,13 +175,15 @@ export default function App() {
     const currentSession = sessionDataRef.current;
     if (!text || !currentSession?.session_id) return;
     
-    fetch("http://localhost:8787/api/heygen/interrupt", {
+    // --- MODIFIED: Use dynamic API_BASE_URL ---
+    fetch(`${API_BASE_URL}/api/heygen/interrupt`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: currentSession.session_id })
     });
     
     try {
-      const r = await fetch("http://localhost:8787/api/talk", {
+      // --- MODIFIED: Use dynamic API_BASE_URL ---
+      const r = await fetch(`${API_BASE_URL}/api/talk`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userText: text, session_id: currentSession.session_id })
       });
