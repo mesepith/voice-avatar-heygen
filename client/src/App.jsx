@@ -78,7 +78,7 @@ export default function App() {
         setStatus("Creating HeyGen session...");
         const sessionRes = await fetch("http://localhost:8787/api/heygen/session", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ avatar_id: "Wayne_20240711" }),
+          body: JSON.stringify({ avatar_id: "Marianne_CasualLook_public" }),
         });
         if (!sessionRes.ok) throw new Error("Failed to create HeyGen session");
         const sessionData = await sessionRes.json();
