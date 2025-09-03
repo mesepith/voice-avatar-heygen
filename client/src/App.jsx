@@ -1,19 +1,24 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Room, RoomEvent } from "livekit-client";
 
-// --- Environment-aware API URLs ---
+// --- NEW --- Environment-aware API URLs
+// Vite exposes env variables through `import.meta.env`
+// VITE_ prefix is required for them to be exposed to the browser.
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787';
 const WS_URL = API_BASE_URL.replace(/^http/, 'ws');
 
-// --- Helper Function (Unchanged) ---
+
+// --- MODIFIED HELPER ---
+// Now accepts a mediaStream instead of creating its own
 const createAudioStreamer = (onAudio) => {
   let audioContext;
   let processor;
   let source;
-  let stream;
+  let stream; // This will be the stream passed to start()
 
   const start = async (mediaStream) => {
     try {
+      // Use the provided stream
       stream = mediaStream;
       audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
       source = audioContext.createMediaStreamSource(stream);
@@ -34,6 +39,7 @@ const createAudioStreamer = (onAudio) => {
   };
 
   const stop = () => {
+    // We no longer stop the tracks here, as the component that created the stream is responsible for it.
     if (source) source.disconnect();
     if (processor) processor.disconnect();
     if (audioContext && audioContext.state !== 'closed') audioContext.close();
@@ -46,110 +52,66 @@ export default function App() {
   const [finalTranscript, setFinalTranscript] = useState("");
   const [aiText, setAiText] = useState("");
   const [status, setStatus] = useState("Initializing...");
-  const [isSessionActive, setIsSessionActive] = useState(false); // -- NEW -- State for session status
-
-  const userVideoRef = useRef(null);
-  const videoRef = useRef(null);
   
-  // -- NEW -- Convert key variables to refs to access them in the stop function
-  const sessionDataRef = useRef(null);
+  // --- NEW REFS for user video and stream ---
+  const userVideoRef = useRef(null);
   const userStreamRef = useRef(null);
-  const roomRef = useRef(null);
-  const wsRef = useRef(null);
-  const audioStreamerRef = useRef(null);
-
-
-  // -- NEW -- Central function to stop all connections and services
-  const handleStopSession = useCallback(async () => {
-    // Prevent function from running if session is already stopped
-    if (!sessionDataRef.current?.session_id) return;
-    
-    console.log("Stopping Heygen session...");
-    setStatus("Session ended.");
-    setIsSessionActive(false);
-
-    // 1. Close WebSocket connection
-    if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
-    }
-    // 2. Stop the audio streamer
-    if (audioStreamerRef.current) {
-        audioStreamerRef.current.stop();
-        audioStreamerRef.current = null;
-    }
-    // 3. Disconnect from LiveKit room
-    if (roomRef.current) {
-        roomRef.current.disconnect();
-        roomRef.current = null;
-    }
-    // 4. Stop camera/mic tracks
-    if (userStreamRef.current) {
-        userStreamRef.current.getTracks().forEach(track => track.stop());
-        userStreamRef.current = null;
-    }
-    // 5. Call backend to terminate Heygen session
-    try {
-        await fetch(`${API_BASE_URL}/api/heygen/stop`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ session_id: sessionDataRef.current.session_id }),
-        });
-        console.log("Successfully sent stop signal to backend.");
-        sessionDataRef.current = null; // Clear session data
-    } catch (error) {
-        console.error("Failed to send stop signal to backend:", error);
-    }
-  }, []); // Empty dependency array as it uses refs, which don't trigger re-renders
-
+  // ---
+  
+  const videoRef = useRef(null);
+  const sessionDataRef = useRef(null);
 
   useEffect(() => {
+    let ws;
+    let audioStreamer;
+    let room;
+
     const setup = async () => {
       try {
+        // --- NEW: Get camera and mic access first ---
         setStatus("Waiting for camera/mic permission...");
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true },
-          video: true
+          video: true // Request video access
         });
         userStreamRef.current = stream;
 
+        // Attach user's video stream to the video element
         if (userVideoRef.current) {
           userVideoRef.current.srcObject = stream;
         }
+        // --- END NEW ---
 
         setStatus("Creating HeyGen session...");
+        // --- MODIFIED: Use dynamic API_BASE_URL ---
         const sessionRes = await fetch(`${API_BASE_URL}/api/heygen/session`, {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ avatar_id: "Marianne_CasualLook_public" }),
         });
         if (!sessionRes.ok) throw new Error("Failed to create HeyGen session");
-        sessionDataRef.current = await sessionRes.json();
+        const sessionData = await sessionRes.json();
+        sessionDataRef.current = sessionData;
 
-        const room = new Room();
-        roomRef.current = room; // Store room in ref
-        await room.connect(sessionDataRef.current.url, sessionDataRef.current.access_token);
+        room = new Room();
+        await room.connect(sessionData.url, sessionData.access_token);
         room.on(RoomEvent.TrackSubscribed, (track) => {
           const el = track.attach();
           videoRef.current?.appendChild(el);
         });
         
         setStatus("Connecting to backend...");
-        const ws = new WebSocket(WS_URL);
-        wsRef.current = ws; // Store WebSocket in ref
+        // --- MODIFIED: Use dynamic WS_URL ---
+        ws = new WebSocket(WS_URL);
         let accumulatedFinalTranscript = "";
 
         ws.onopen = () => {
-          const audioStreamer = createAudioStreamer((audioChunk) => {
-            if (wsRef.current?.readyState === WebSocket.OPEN) {
-              wsRef.current.send(audioChunk);
-            }
+          audioStreamer = createAudioStreamer((audioChunk) => {
+            if (ws?.readyState === WebSocket.OPEN) ws.send(audioChunk);
           });
-          audioStreamerRef.current = audioStreamer; // Store streamer in ref
-
+          // --- MODIFIED: Pass the stream to the audio streamer ---
           if (userStreamRef.current) {
             audioStreamer.start(userStreamRef.current);
             setStatus("Listening...");
-            setIsSessionActive(true); // -- NEW -- Session is now active
           } else {
             throw new Error("User media stream not available.");
           }
@@ -186,31 +148,44 @@ export default function App() {
         } else {
             setStatus(`Error: ${error.message}`);
         }
-        setIsSessionActive(false); // Ensure session is marked as inactive on error
       }
     };
 
     setup();
 
-    // -- MODIFIED -- Cleanup now calls the central stop function
     return () => {
-      console.log("Running cleanup on component unmount...");
-      handleStopSession();
+      console.log("Running cleanup...");
+      // --- NEW: Stop user media tracks (turns off camera light) ---
+      if (userStreamRef.current) {
+        userStreamRef.current.getTracks().forEach(track => track.stop());
+      }
+      // ---
+      if (ws) ws.close();
+      if (audioStreamer) audioStreamer.stop();
+      if (room) room.disconnect();
+      if (sessionDataRef.current?.session_id) {
+        const payload = JSON.stringify({ session_id: sessionDataRef.current.session_id });
+        // --- MODIFIED: Use dynamic API_BASE_URL for beacon ---
+        navigator.sendBeacon(`${API_BASE_URL}/api/heygen/stop`, payload);
+      }
     };
-  }, [handleStopSession]); // Add handleStopSession to dependency array
+  }, []);
   
   async function sendToLLM(text) {
-    if (!text || !sessionDataRef.current?.session_id || !isSessionActive) return;
+    const currentSession = sessionDataRef.current;
+    if (!text || !currentSession?.session_id) return;
     
+    // --- MODIFIED: Use dynamic API_BASE_URL ---
     fetch(`${API_BASE_URL}/api/heygen/interrupt`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionDataRef.current.session_id })
+      body: JSON.stringify({ session_id: currentSession.session_id })
     });
     
     try {
+      // --- MODIFIED: Use dynamic API_BASE_URL ---
       const r = await fetch(`${API_BASE_URL}/api/talk`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userText: text, session_id: sessionDataRef.current.session_id })
+        body: JSON.stringify({ userText: text, session_id: currentSession.session_id })
       });
       const data = await r.json();
       if (data.spoke) {
@@ -223,49 +198,63 @@ export default function App() {
 
   const isListening = status === "Listening...";
   
-  const videoContainerStyle = { position: 'relative', width: "100%", borderRadius: 12, overflow: 'hidden', backgroundColor: '#000', aspectRatio: '16 / 9' };
-  const userVideoStyle = { position: 'absolute', bottom: '20px', right: '20px', width: '25%', maxWidth: '280px', borderRadius: '8px', border: '2px solid rgba(255, 255, 255, 0.5)', boxShadow: '0 4px 15px rgba(0,0,0,0.3)', transform: 'scaleX(-1)', zIndex: 10, };
+  // --- NEW: CSS Styles for the video layout ---
+  const videoContainerStyle = {
+    position: 'relative',
+    width: "100%",
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#000',
+    aspectRatio: '16 / 9'
+  };
+
+  const userVideoStyle = {
+    position: 'absolute',
+    bottom: '20px',
+    right: '20px',
+    width: '25%', // Adjust size as needed
+    maxWidth: '280px',
+    borderRadius: '8px',
+    border: '2px solid rgba(255, 255, 255, 0.5)',
+    boxShadow: '0 4px 15px rgba(0,0,0,0.3)',
+    transform: 'scaleX(-1)', // Mirror the video for a natural feel
+    zIndex: 10,
+  };
+  // ---
 
   return (
     <div style={{ display:"grid", gap:12, padding:16, maxWidth:900, margin:"0 auto", fontFamily:'sans-serif' }}>
       <h2>HeyGen + AI (Google Meet Style)</h2>
 
+      {/* --- MODIFIED: Video container now holds both AI and user videos --- */}
       <div style={videoContainerStyle}>
         <div ref={videoRef} style={{ width: "100%", height: "100%" }} />
-        <video ref={userVideoRef} style={userVideoStyle} autoPlay muted playsInline />
+        <video 
+          ref={userVideoRef} 
+          style={userVideoStyle}
+          autoPlay 
+          muted 
+          playsInline
+        />
       </div>
+      {/* --- END MODIFICATION --- */}
 
       <div style={{ display:"flex", gap:12, alignItems: "center" }}>
-        <div style={{ width: 20, height: 20, backgroundColor: isListening ? '#2ecc71' : '#f39c12', borderRadius: '50%', transition: 'all 0.3s ease', boxShadow: isListening ? '0 0 10px #2ecc71' : 'none' }} title={status} />
+        <div style={{
+            width: 20, height: 20,
+            backgroundColor: isListening ? '#2ecc71' : '#f39c12',
+            borderRadius: '50%', transition: 'all 0.3s ease',
+            boxShadow: isListening ? '0 0 10px #2ecc71' : 'none'
+          }}
+          title={status}
+        />
         <p style={{ flex: 1, margin: 0, padding: '8px', border: '1px solid #ccc', borderRadius: '4px', minHeight: '24px', backgroundColor: '#f9f9f9' }}>
           {finalTranscript} <em style={{opacity: 0.6}}>{interimTranscript}</em>
         </p>
       </div>
-
-      {/* -- NEW -- Stop Button and Status Display -- */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 }}>
-        <div>
-          <strong>Status:</strong> {status}
-        </div>
-        <button
-          onClick={handleStopSession}
-          disabled={!isSessionActive}
-          style={{
-            padding: '10px 20px',
-            fontSize: '16px',
-            cursor: isSessionActive ? 'pointer' : 'not-allowed',
-            backgroundColor: isSessionActive ? '#e74c3c' : '#bdc3c7',
-            color: 'white',
-            border: 'none',
-            borderRadius: '5px',
-            transition: 'background-color 0.3s ease'
-          }}
-        >
-          Stop Heygen
-        </button>
+      <div>
+        <strong>Status:</strong> {status}
       </div>
-      {/* -- END NEW -- */}
-
       <div>
         <strong>AI Response:</strong>
         <p style={{ marginTop: 4, whiteSpace: 'pre-wrap' }}>{aiText || "—"}</p>

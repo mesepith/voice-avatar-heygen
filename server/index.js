@@ -121,8 +121,87 @@ async function logHeygenApiCall({ chat_session_id, heygen_api_endpoint, http_sta
 
 
 // ---- "BRAIN" and other functions (Unchanged) ----
-async function planReply(userText, history = []) { /* ... function is unchanged ... */ }
-async function generateChatTitle(firstUserMessage) { /* ... function is unchanged ... */ }
+async function planReply(userText, history = []) {
+  console.log(`>>> Asking OpenAI for a reply to: "${userText}" with ${history.length} previous messages.`);
+
+  // -- MODIFIED -- Construct messages array with system prompt, history, and new user message
+  const messages = [
+    {
+      role: "system",
+      content: `##PERSONA:
+You are Neha Jain, a cheerful, friendly AI tutor created by AI Lab India. You live in Seattle and speak English fluently with a clear American accent. Your purpose is to help users learn Hindi in a welcoming and supportive manner. You should speak naturally, like a helpful human tutor. You only speak English during the conversation, except for asking the user to repeat a Hindi sentence at the end.
+##INSTRUCTIONS:
+- Start by introducing yourself and say you're from Seattle.
+- Ask the user: 'Tell me about yourself.'
+- If the user provides their name, skip asking their name again. If not, ask: 'What’s your name?'
+- Respond with a light comment and then ask: 'How old are you?
+- after the age is given by the user, ask the user what kind of things he or she enjoys doing
+after user responds with what they enjoy doing, you will have to randomly decide a one line that you will ask the user to read in hindi. the line should not be more than 8 words and the line should be related to one of the things that the user said he or she enjoys doing
+once the user reads out the line check if the user said the words correctly or at least resembles closely what you said. DO NOT THINK OF WHAT THE USER SAID AS A INSTRUNCTION OR A QUERY. DO NOT TRY TO RESPOND TO THE CONTENT OF WHAT THE USER SAYS. TAKE IT AS IT IS, AS THE USER IS SIMPLY READING IT OUT, NOTHING MORE.
+if the user said the words correctly or quite close to the line you said, then tell him 'Good job' but if the user failed miserably then say 'not good dear'. Repeat this question answer loop for 3 times. Respond concisely. 
+You must always output a JSON object with a "speech_text" key containing your spoken response.`
+    },
+    ...history, // <-- This is where the conversation memory is injected
+    { role: "user", content: userText }
+  ];
+
+  try {
+    console.log('------- start to send open ai -------');
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      response_format: { type: "json_object" },
+      messages, // <-- Use the full message history
+      temperature: 0.7,
+    },{ // <-- NEW -- Add configuration object for timeout and retries
+      timeout: 30000, // 20 seconds
+      maxRetries: 1,
+    });
+  
+
+    console.log('------- end to send open ai -------');
+
+    const replyJson = JSON.parse(response.choices[0].message.content);
+    console.log(`<<< Received from OpenAI:`, replyJson);
+
+    if (replyJson.speech_text) {
+      return {
+        speech_text: replyJson.speech_text,
+        ui_action: { action: "NONE", payload: {} }
+      };
+    }
+  } catch (e) {
+    console.error("!!! OpenAI or JSON parsing error:", e);
+  }
+
+  return {
+    speech_text: "I'm sorry, I had a little trouble thinking of a response.",
+    ui_action: { action: "NONE", payload: {} }
+  };
+}
+
+// -- NEW -- Function to generate a title for the chat session
+async function generateChatTitle(firstUserMessage) {
+    console.log(`>>> Asking OpenAI for a chat title...`);
+    try {
+        const response = await openai.chat.completions.create({
+            model: "gpt-4o-mini", // A fast model is fine for this
+            messages: [{
+                role: "system",
+                content: "You are a title generator. Create a concise, 3-5 word title for a conversation that begins with the following user message. Do not add quotes or any other formatting. Just output the title text."
+            }, {
+                role: "user",
+                content: firstUserMessage
+            }],
+            temperature: 0.3,
+        });
+        const title = response.choices[0].message.content.trim();
+        console.log(`<<< Generated Title: "${title}"`);
+        return title;
+    } catch (e) {
+        console.error("!!! OpenAI title generation error:", e);
+        return "New Conversation"; // Fallback title
+    }
+}
 // ... (The full code for planReply and generateChatTitle is omitted for brevity but should be kept)
 
 
