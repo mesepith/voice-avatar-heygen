@@ -80,7 +80,7 @@ wss.on('connection', (ws) => {
           encoding: 'LINEAR16',
           sampleRateHertz: 16000,
           languageCode: 'en-US',
-          alternativeLanguageCodes: ['hi-IN'], 
+          alternativeLanguageCodes: ['hi-IN', "en-IN"], 
           enableAutomaticPunctuation: true,
           model: 'telephony',
           useEnhanced: true,
