@@ -220,6 +220,28 @@ function normalizeOpenAIError(err) {
   };
 }
 
+//buildOpenAIRequestMeta and buildOpenAIResponseMeta function Improve what we store in request_payload / response_payload 
+function buildOpenAIRequestMeta(messages, extra = {}) {
+  const lastUser = [...messages].reverse().find(m => m.role === 'user')?.content || '';
+  return {
+    ...extra,
+    message_count: messages.length,
+    last_user_preview: lastUser.slice(0, 160)
+  };
+}
+
+function buildOpenAIResponseMeta(response) {
+  const choice = response?.choices?.[0];
+  const txt = choice?.message?.content || '';
+  return {
+    id: response?.id,
+    model: response?.model,
+    finish_reason: choice?.finish_reason || null,
+    content_preview: txt.slice(0, 160)
+  };
+}
+
+
 // Log any third-party API error (OpenAI, HeyGen, Deepgram, etc.)
 async function logThirdPartyError({
   service_by,             // 'open_ai' | 'heygen' | 'deepgram' | ...
@@ -354,14 +376,16 @@ async function logOpenaiApiCall({
   usage = {},
   request_payload = null,
   response_payload = null,
-  notes = ''
+  notes = '',
+  table_name = null,     // <-- NEW (optional)
+  table_id = null        // <-- NEW (optional)
 }) {
   try {
-    await db.execute(
+    const [res] = await db.execute(
       `INSERT INTO \`openai_api_log\`
        (chat_session_id, openai_api_endpoint, http_status_code, elapsed_ms, started_at, finished_at, model,
-        prompt_tokens, completion_tokens, reasoning_tokens, total_tokens, request_payload, response_payload, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), CAST(? AS JSON), ?)`,
+        prompt_tokens, completion_tokens, reasoning_tokens, total_tokens, request_payload, response_payload, notes, table_name, table_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), CAST(? AS JSON), ?, ?, ?)`,
       [
         chat_session_id,
         openai_api_endpoint,
@@ -376,14 +400,30 @@ async function logOpenaiApiCall({
         usage?.total_tokens ?? null,
         JSON.stringify(request_payload || {}),
         JSON.stringify(response_payload || {}),
-        notes
+        notes,
+        table_name,
+        table_id
       ]
     );
+    return res.insertId; // <-- return log id
   } catch (e) {
     console.error('!!! FAILED to log OpenAI call:', e.message);
+    return null;
   }
 }
 
+//Add a helper to update back-links on the log row
+async function updateOpenaiLogLink(log_id, table_name, table_id) {
+  if (!log_id || !table_name || !table_id) return;
+  try {
+    await db.execute(
+      'UPDATE `openai_api_log` SET `table_name` = ?, `table_id` = ? WHERE `log_id` = ?',
+      [table_name, table_id, log_id]
+    );
+  } catch (e) {
+    console.error('!!! FAILED to update openai_api_log link:', e.message);
+  }
+}
 
 
 // ---- "BRAIN" and other functions (Unchanged) ----
@@ -392,9 +432,7 @@ async function planReply(userText, history = [], chat_session_id = null) {
   console.log(`>>> Asking OpenAI for a reply to: "${userText}" with ${history.length} previous messages.`);
 
   const messages = [
-    {
-      role: "system",
-      // NOTE: Keep the literal word "JSON" so json_object mode is allowed.
+    { role: "system", 
       content: `## PERSONA
 You are Neha Jain, a cheerful, friendly AI tutor created by AI Lab India. You live in Seattle and speak English fluently with a clear American accent. Your purpose is to help users learn Hindi in a welcoming and supportive manner. You should speak naturally, like a helpful human tutor. You speak English throughout the conversation, EXCEPT when you present a short Hindi line for the learner to read aloud.
 ## INSTRUCTIONS
@@ -427,14 +465,13 @@ You are Neha Jain, a cheerful, friendly AI tutor created by AI Lab India. You li
 - After giving feedback ("Good job" / "not good dear"), proceed to the next round with a new short Hindi line related to their interests.
 `
     },
-    ...history, // prior chat [(user, assistant)...]
+    ...history,
     { role: "user", content: userText }
   ];
 
   try {
     console.log('------- start to send open ai -------');
 
-    // Timed OpenAI call
     const timed = await timeIt(() =>
       openai.chat.completions.create(
         {
@@ -448,6 +485,9 @@ You are Neha Jain, a cheerful, friendly AI tutor created by AI Lab India. You li
     const response = timed.result;
     console.log('------- end to send open ai -------');
 
+    // 👇 hoist before inner try
+    let openai_log_id = null;
+
     // Parse JSON-mode output safely
     const rawContent = response?.choices?.[0]?.message?.content ?? "{}";
     let replyJson;
@@ -457,7 +497,8 @@ You are Neha Jain, a cheerful, friendly AI tutor created by AI Lab India. You li
       const usage = response?.usage || {};
       const modelName = response?.model || "gpt-5-chat-latest";
 
-      await logOpenaiApiCall({
+      // write OpenAI perf/usage log and keep the insert id
+      openai_log_id = await logOpenaiApiCall({
         chat_session_id,
         openai_api_endpoint: 'chat.completions',
         http_status_code: 200,
@@ -466,13 +507,12 @@ You are Neha Jain, a cheerful, friendly AI tutor created by AI Lab India. You li
         finished_at: timed.finished_at,
         model: modelName,
         usage,
-        request_payload: { response_format: { type: "json_object" } },
-        response_payload: { id: response?.id },
+        request_payload: buildOpenAIRequestMeta(messages, { response_format: { type: "json_object" } }),
+        response_payload: buildOpenAIResponseMeta(response),
         notes: 'success'
       });
 
     } catch (parseErr) {
-      // If for any reason parsing fails, log and fallback
       await logThirdPartyError({
         service_by: 'open_ai',
         provider_endpoint: 'chat.completions',
@@ -483,14 +523,14 @@ You are Neha Jain, a cheerful, friendly AI tutor created by AI Lab India. You li
         error_param: null,
         error_message: `Failed to parse assistant JSON: ${parseErr?.message}`,
         request_id: response?.requestID ?? null,
-        request_payload: { model: "gpt-5", response_format: { type: "json_object" }, messages },
+        request_payload: { model: "gpt-5-chat-latest", response_format: { type: "json_object" }, messages },
         response_payload: { content: rawContent },
         stack_trace: parseErr?.stack ?? null
       });
       replyJson = { speech_text: "I'm sorry, I had trouble reading my own answer." };
     }
 
-    // Token usage
+    // Token usage for saving into `chats`
     const usage = response?.usage || {};
     const tokens = {
       prompt_tokens: usage.prompt_tokens ?? null,
@@ -503,14 +543,11 @@ You are Neha Jain, a cheerful, friendly AI tutor created by AI Lab India. You li
       speech_text: replyJson?.speech_text ?? "I'm sorry, I had a little trouble thinking of a response.",
       ui_action: { action: "NONE", payload: {} },
       tokens,
-      model: response?.model || "gpt-5"
+      model: response?.model || "gpt-5-chat-latest",
+      openai_log_id, // ✅ now defined
     };
 
   } catch (err) {
-    console.error("!!! OpenAI error in planReply:", err);
-
-    // Normalize and persist error
-
     console.error("!!! OpenAI error in planReply:", err);
     const normalized = normalizeOpenAIError(err);
     const t = err?._timing || {};
@@ -532,41 +569,58 @@ You are Neha Jain, a cheerful, friendly AI tutor created by AI Lab India. You li
       finished_at: t.finished_at ?? null
     });
 
-    // Bubble up a graceful fallback
     return {
       speech_text: "I'm sorry, I had a little trouble thinking of a response.",
       ui_action: { action: "NONE", payload: {} },
       tokens: { prompt_tokens: null, completion_tokens: null, reasoning_tokens: null, total_tokens: null },
-      model: "gpt-5"
+      model: "gpt-5-chat-latest"
     };
   }
 }
 
 
 // -- NEW -- Function to generate a title for the chat session
-async function generateChatTitle(firstUserMessage) {
+async function generateChatTitle(firstUserMessage, chat_session_id) {
   console.log(`>>> Asking OpenAI for a chat title...`);
   try {
-    const response = await openai.chat.completions.create({
+    const timed = await timeIt(() => openai.chat.completions.create({
       model: "gpt-5-chat-latest",
       messages: [
-        {
-          role: "system",
-          content:
-            "You are a title generator. Create a concise, 3-5 word title for a conversation that begins with the following user message. Do not add quotes or any other formatting. Just output the title text."
-        },
+        { role: "system", content: "You are a title generator. Create a concise, 3-5 word title for a conversation that begins with the following user message. Do not add quotes or any other formatting. Just output the title text." },
         { role: "user", content: firstUserMessage }
       ]
-      // no temperature for gpt-5
-    });
+    }));
+
+    const response = timed.result;
     const title = response.choices[0].message.content.trim();
-    console.log(`<<< Generated Title: "${title}"`);
-    return title;
+
+    // ✅ chat_session_id is now in scope
+    const openai_log_id = await logOpenaiApiCall({
+      chat_session_id,
+      openai_api_endpoint: 'chat.completions',
+      http_status_code: 200,
+      elapsed_ms: timed.elapsed_ms,
+      started_at: timed.started_at,
+      finished_at: timed.finished_at,
+      model: response?.model || 'gpt-5-chat-latest',
+      usage: response?.usage || {},
+      request_payload: buildOpenAIRequestMeta([
+        { role: "system", content: "title generator..." },
+        { role: "user", content: firstUserMessage }
+      ]),
+      response_payload: buildOpenAIResponseMeta(response),
+      notes: 'title generation'
+    });
+
+    console.log(`<<< Generated Title: "${title}" in ${timed.elapsed_ms} ms`);
+    return { title, openai_log_id };
+
   } catch (e) {
     console.error("!!! OpenAI title generation error:", e);
-    return "New Conversation";
+    return { title: "New Conversation", openai_log_id: null };
   }
 }
+
 
 // ---- UPDATED /api/talk ENDPOINT with Logging ----
 app.post("/api/talk", async (req, res) => {
@@ -588,40 +642,54 @@ app.post("/api/talk", async (req, res) => {
     const isFirstMessage = history.length === 0;
 
     // >>> call planReply with chat_session_id so we can log errors against session
-    const { speech_text, ui_action, tokens, model } = await planReply(userText, history, chat_session_id);
+    const { speech_text, ui_action, tokens, model, openai_log_id } = await planReply(userText, history, chat_session_id);
 
     // >>> include tokens + service_by + model in INSERT
     const [insertResult] = await db.execute(
       `INSERT INTO \`chats\`
-       (guest_id, chat_session_id, user_message, ai_response, has_image, ai_model, service_by,
-        prompt_tokens, completion_tokens, reasoning_tokens, total_tokens, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      (guest_id, chat_session_id, user_message, ai_response, has_image, ai_model, service_by,
+        prompt_tokens, completion_tokens, reasoning_tokens, total_tokens, openai_api_log_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
       [
         guest_id,
         chat_session_id,
         userText,
         speech_text,
-        0,                   // has_image
-        model || 'gpt-5',    // ai_model
-        'open_ai',           // service_by
+        0,
+        model || 'gpt-5-chat-latest',
+        'open_ai',
         tokens?.prompt_tokens,
         tokens?.completion_tokens,
         tokens?.reasoning_tokens,
-        tokens?.total_tokens
+        tokens?.total_tokens,
+        openai_log_id || null
       ]
     );
     const newChatId = insertResult.insertId;
 
+    // Update the openai log row with table link (reverse link)
+    if (openai_log_id && newChatId) {
+      await updateOpenaiLogLink(openai_log_id, 'chats', newChatId);
+    }
+
     if (isFirstMessage && newChatId) {
-      const title = await generateChatTitle(userText);
+      const { title, openai_log_id: title_log_id } = await generateChatTitle(userText, chat_session_id);
       if (title) {
-        await db.execute(
-          'INSERT INTO `chats_title` (chat_id, chat_session_id, title, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())',
-          [newChatId, chat_session_id, title]
+        const [r] = await db.execute(
+          'INSERT INTO `chats_title` (chat_id, chat_session_id, title, openai_api_log_id, created_at, updated_at) VALUES (?, ?, ?, ?, NOW(), NOW())',
+          [newChatId, chat_session_id, title, title_log_id || null]
         );
+        const newTitleId = r.insertId;
+
+        // back-link the OpenAI log row to chats_title
+        if (title_log_id && newTitleId) {
+          await updateOpenaiLogLink(title_log_id, 'chats_title', newTitleId);
+        }
+
         console.log(`Saved new chat title for session ${chat_session_id}`);
       }
     }
+
 
     // Send the AI's response text to HeyGen to be spoken
     try {
