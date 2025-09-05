@@ -233,13 +233,17 @@ async function logThirdPartyError({
   request_id = null,
   request_payload = null,   // object -> stored as JSON
   response_payload = null,  // object -> stored as JSON
-  stack_trace = null
+  stack_trace = null,
+  elapsed_ms = null,
+  started_at = null,
+  finished_at = null
 }) {
   try {
     await db.execute(
       `INSERT INTO \`third_party_api_error_log\`
-       (service_by, provider_endpoint, chat_session_id, http_status_code, error_code, error_type, error_param, error_message, request_id, request_payload, response_payload, stack_trace, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), CAST(? AS JSON), ?, NOW())`,
+       (service_by, provider_endpoint, chat_session_id, http_status_code, error_code, error_type, error_param, error_message, request_id,
+        request_payload, response_payload, stack_trace, elapsed_ms, started_at, finished_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), CAST(? AS JSON), ?, ?, ?, ?, NOW())`,
       [
         service_by,
         provider_endpoint,
@@ -252,13 +256,17 @@ async function logThirdPartyError({
         request_id,
         JSON.stringify(request_payload ?? {}),
         JSON.stringify(response_payload ?? {}),
-        stack_trace
+        stack_trace,
+        elapsed_ms,
+        started_at,
+        finished_at
       ]
     );
   } catch (dbErr) {
     console.error("!!! FAILED to log third-party error:", dbErr?.message);
   }
 }
+
 
 
 // -- NEW -- Helper function to log all HeyGen API calls to the database
@@ -334,6 +342,49 @@ async function logDeepgramApiCall({
   }
 }
 
+//  Helper function to log all OpenAI API calls to the database
+async function logOpenaiApiCall({
+  chat_session_id,
+  openai_api_endpoint = 'chat.completions',
+  http_status_code = 200,
+  elapsed_ms = null,
+  started_at = null,
+  finished_at = null,
+  model = null,
+  usage = {},
+  request_payload = null,
+  response_payload = null,
+  notes = ''
+}) {
+  try {
+    await db.execute(
+      `INSERT INTO \`openai_api_log\`
+       (chat_session_id, openai_api_endpoint, http_status_code, elapsed_ms, started_at, finished_at, model,
+        prompt_tokens, completion_tokens, reasoning_tokens, total_tokens, request_payload, response_payload, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), CAST(? AS JSON), ?)`,
+      [
+        chat_session_id,
+        openai_api_endpoint,
+        http_status_code,
+        elapsed_ms,
+        started_at,
+        finished_at,
+        model,
+        usage?.prompt_tokens ?? null,
+        usage?.completion_tokens ?? null,
+        usage?.completion_tokens_details?.reasoning_tokens ?? null,
+        usage?.total_tokens ?? null,
+        JSON.stringify(request_payload || {}),
+        JSON.stringify(response_payload || {}),
+        notes
+      ]
+    );
+  } catch (e) {
+    console.error('!!! FAILED to log OpenAI call:', e.message);
+  }
+}
+
+
 
 // ---- "BRAIN" and other functions (Unchanged) ----
 // ---- "BRAIN" and other functions (Updated) ----
@@ -382,18 +433,19 @@ You are Neha Jain, a cheerful, friendly AI tutor created by AI Lab India. You li
 
   try {
     console.log('------- start to send open ai -------');
-    const response = await openai.chat.completions.create(
-      {
-        model: "gpt-5-chat-latest",
-        response_format: { type: "json_object" }, // JSON mode; prompt contains the word "JSON"
-        messages // IMPORTANT: must be `messages`, not `input`
-        // temperature: removed — gpt-5 fixed to default
-      },
-      {
-        timeout: 30000,
-        maxRetries: 1,
-      }
+
+    // Timed OpenAI call
+    const timed = await timeIt(() =>
+      openai.chat.completions.create(
+        {
+          model: "gpt-5-chat-latest",
+          response_format: { type: "json_object" },
+          messages
+        },
+        { timeout: 30000, maxRetries: 1 }
+      )
     );
+    const response = timed.result;
     console.log('------- end to send open ai -------');
 
     // Parse JSON-mode output safely
@@ -401,6 +453,24 @@ You are Neha Jain, a cheerful, friendly AI tutor created by AI Lab India. You li
     let replyJson;
     try {
       replyJson = JSON.parse(rawContent);
+
+      const usage = response?.usage || {};
+      const modelName = response?.model || "gpt-5-chat-latest";
+
+      await logOpenaiApiCall({
+        chat_session_id,
+        openai_api_endpoint: 'chat.completions',
+        http_status_code: 200,
+        elapsed_ms: timed.elapsed_ms,
+        started_at: timed.started_at,
+        finished_at: timed.finished_at,
+        model: modelName,
+        usage,
+        request_payload: { response_format: { type: "json_object" } },
+        response_payload: { id: response?.id },
+        notes: 'success'
+      });
+
     } catch (parseErr) {
       // If for any reason parsing fails, log and fallback
       await logThirdPartyError({
@@ -440,7 +510,10 @@ You are Neha Jain, a cheerful, friendly AI tutor created by AI Lab India. You li
     console.error("!!! OpenAI error in planReply:", err);
 
     // Normalize and persist error
+
+    console.error("!!! OpenAI error in planReply:", err);
     const normalized = normalizeOpenAIError(err);
+    const t = err?._timing || {};
     await logThirdPartyError({
       service_by: 'open_ai',
       provider_endpoint: 'chat.completions',
@@ -451,9 +524,12 @@ You are Neha Jain, a cheerful, friendly AI tutor created by AI Lab India. You li
       error_param: normalized.error_param,
       error_message: normalized.error_message,
       request_id: normalized.request_id,
-      request_payload: { model: "gpt-5", response_format: { type: "json_object" }, messages },
+      request_payload: { response_format: { type: "json_object" } },
       response_payload: normalized.response_payload,
-      stack_trace: normalized.stack_trace
+      stack_trace: normalized.stack_trace,
+      elapsed_ms: t.elapsed_ms ?? null,
+      started_at: t.started_at ?? null,
+      finished_at: t.finished_at ?? null
     });
 
     // Bubble up a graceful fallback
@@ -556,13 +632,14 @@ app.post("/api/talk", async (req, res) => {
           text: speech_text
       };
 
-      const r = await fetch("https://api.heygen.com/v1/streaming.task", {
+      const timedTask = await timeIt(() => fetch("https://api.heygen.com/v1/streaming.task", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${process.env.HEYGEN_API_KEY}` },
         body: JSON.stringify(requestBody)
-      });
+      }));
       
-      const responseText = await r.text(); // Get response text once
+      const r = timedTask.result;
+      const responseText = await r.text();
 
       // -- LOGGING -- Log the 'streaming.task' API call
       await logHeygenApiCall({
@@ -571,11 +648,26 @@ app.post("/api/talk", async (req, res) => {
         http_status_code: r.status,
         request_payload: requestBody,
         response_payload: { data: responseText },
-        notes: r.ok ? 'Successfully sent text to HeyGen.' : 'Failed to send text to HeyGen.'
+        notes: r.ok ? 'Successfully sent text to HeyGen.' : 'Failed to send text to HeyGen.',
+        elapsed_ms: timedTask.elapsed_ms,
+        started_at: timedTask.started_at,
+        finished_at: timedTask.finished_at
       });
 
       if (!r.ok) {
         console.error("HeyGen task error:", r.status, responseText);
+        await logThirdPartyError({
+          service_by: 'heygen',
+          provider_endpoint: 'streaming.task',
+          chat_session_id,
+          http_status_code: r.status,
+          error_message: responseText || 'Non-200 from streaming.task',
+          request_payload: requestBody,
+          response_payload: { data: responseText },
+          elapsed_ms: timedTask.elapsed_ms,
+          started_at: timedTask.started_at,
+          finished_at: timedTask.finished_at
+        });
       } else {
         console.log("Successfully sent text to HeyGen for speaking.");
       }
@@ -587,6 +679,21 @@ app.post("/api/talk", async (req, res) => {
 
   } catch (e) {
     console.error("Talk endpoint failed:", e);
+
+    const t = e?._timing || {};
+    await logThirdPartyError({
+      service_by: 'heygen',
+      provider_endpoint: 'streaming.task',
+      chat_session_id,
+      http_status_code: 500,
+      error_message: e?.message || 'Exception in streaming.task',
+      request_payload: { session_id: chat_session_id, task_type: "repeat" },
+      response_payload: {},
+      elapsed_ms: t.elapsed_ms ?? null,
+      started_at: t.started_at ?? null,
+      finished_at: t.finished_at ?? null
+    });
+
     res.status(500).json({ error: "talk failed" });
   }
 });
@@ -651,22 +758,44 @@ app.post("/api/heygen/session", async (req, res) => {
 
     // -- LOGGING -- Prepare request body for the 'start' call
     const requestBodyStart = { session_id: d.session_id };
-    
-    const rStart = await fetch("https://api.heygen.com/v1/streaming.start", { 
-      method: "POST", 
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.HEYGEN_API_KEY}` }, 
-      body: JSON.stringify(requestBodyStart) 
-    });
+
+    const timedStart = await timeIt(() => fetch("https://api.heygen.com/v1/streaming.start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.HEYGEN_API_KEY}` },
+      body: JSON.stringify(requestBodyStart)
+    }));
+
+    const rStart = timedStart.result;
 
     // -- LOGGING -- Log the 'streaming.start' call
+    // Log start with timing
     await logHeygenApiCall({
       chat_session_id: d.session_id,
       heygen_api_endpoint: 'streaming.start',
       http_status_code: rStart.status,
       request_payload: requestBodyStart,
-      response_payload: {}, // No meaningful response body for this call
-      notes: rStart.ok ? 'Session start command sent.' : 'Failed to send start command.'
+      response_payload: {}, // no meaningful body
+      notes: rStart.ok ? 'Session start command sent.' : 'Failed to send start command.',
+      elapsed_ms: timedStart.elapsed_ms,
+      started_at: timedStart.started_at,
+      finished_at: timedStart.finished_at
     });
+
+    // Error path: also log to third_party_api_error_log
+    if (!rStart.ok) {
+      await logThirdPartyError({
+        service_by: 'heygen',
+        provider_endpoint: 'streaming.start',
+        chat_session_id: d.session_id,
+        http_status_code: rStart.status,
+        error_message: 'Non-200 from streaming.start',
+        request_payload: requestBodyStart,
+        response_payload: {},
+        elapsed_ms: timedStart.elapsed_ms,
+        started_at: timedStart.started_at,
+        finished_at: timedStart.finished_at
+      });
+    }
 
     res.json({ session_id: d.session_id, url: d.url, access_token: d.access_token }); 
   } catch (e) { 
@@ -687,35 +816,61 @@ app.post("/api/heygen/session", async (req, res) => {
 app.post("/api/heygen/interrupt", async (req, res) => { 
   const { session_id } = req.body;
   try { 
-    const r = await fetch("https://api.heygen.com/v1/streaming.interrupt", { 
+
+    const timed = await timeIt(() => fetch("https://api.heygen.com/v1/streaming.interrupt", { 
       method: "POST", 
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.HEYGEN_API_KEY}` }, 
       body: JSON.stringify({ session_id }) 
-    });
+    }));
+
+    const r = timed.result;
     const data = await r.json().catch(() => ({})); 
     
     // -- LOGGING --
     await logHeygenApiCall({
+      chat_session_id: session_id,
+      heygen_api_endpoint: 'streaming.interrupt',
+      http_status_code: r.status,
+      request_payload: { session_id },
+      response_payload: data,
+      notes: r.ok ? 'Interrupt successful.' : 'Interrupt failed.',
+      elapsed_ms: timed.elapsed_ms,
+      started_at: timed.started_at,
+      finished_at: timed.finished_at
+    });
+
+    if (!r.ok) {
+      await logThirdPartyError({
+        service_by: 'heygen',
+        provider_endpoint: 'streaming.interrupt',
         chat_session_id: session_id,
-        heygen_api_endpoint: 'streaming.interrupt',
         http_status_code: r.status,
+        error_message: JSON.stringify(data),
         request_payload: { session_id },
         response_payload: data,
-        notes: r.ok ? 'Interrupt successful.' : 'Interrupt failed.'
-    });
+        elapsed_ms: timed.elapsed_ms,
+        started_at: timed.started_at,
+        finished_at: timed.finished_at
+      });
+    }
 
     res.status(r.ok ? 200 : 500).json(data); 
   } catch (e) { 
     console.error(e); 
     // -- LOGGING --
-     await logHeygenApiCall({
+     const t = e?._timing || {};
+      await logThirdPartyError({
+        service_by: 'heygen',
+        provider_endpoint: 'streaming.interrupt',
         chat_session_id: session_id,
-        heygen_api_endpoint: 'streaming.interrupt',
         http_status_code: 500,
+        error_message: e?.message || 'Exception in streaming.interrupt',
         request_payload: { session_id },
-        response_payload: { error: e.message },
-        notes: 'Endpoint failed due to an exception.'
-    });
+        response_payload: {},
+        elapsed_ms: t.elapsed_ms ?? null,
+        started_at: t.started_at ?? null,
+        finished_at: t.finished_at ?? null
+      });
     res.status(500).json({ error: "Failed to interrupt" }); 
   } 
 });
@@ -723,35 +878,62 @@ app.post("/api/heygen/interrupt", async (req, res) => {
 app.post("/api/heygen/stop", async (req, res) => { 
   const { session_id } = req.body;
   try { 
-    const r = await fetch("https://api.heygen.com/v1/streaming.stop", { 
+
+    const timed = await timeIt(() => fetch("https://api.heygen.com/v1/streaming.stop", { 
       method: "POST", 
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.HEYGEN_API_KEY}` }, 
       body: JSON.stringify({ session_id }) 
-    });
+    }));
+
+    const r = timed.result;
     const data = await r.json().catch(() => ({})); 
     
     // -- LOGGING --
     await logHeygenApiCall({
+      chat_session_id: session_id,
+      heygen_api_endpoint: 'streaming.stop',
+      http_status_code: r.status,
+      request_payload: { session_id },
+      response_payload: data,
+      notes: r.ok ? 'Session stopped successfully.' : 'Session stop failed.',
+      elapsed_ms: timed.elapsed_ms,
+      started_at: timed.started_at,
+      finished_at: timed.finished_at
+    });
+
+    if (!r.ok) {
+      await logThirdPartyError({
+        service_by: 'heygen',
+        provider_endpoint: 'streaming.stop',
         chat_session_id: session_id,
-        heygen_api_endpoint: 'streaming.stop',
         http_status_code: r.status,
+        error_message: JSON.stringify(data),
         request_payload: { session_id },
         response_payload: data,
-        notes: r.ok ? 'Session stopped successfully.' : 'Session stop failed.'
-    });
+        elapsed_ms: timed.elapsed_ms,
+        started_at: timed.started_at,
+        finished_at: timed.finished_at
+      });
+    }
 
     res.status(r.ok ? 200 : 500).json(data); 
   } catch (e) { 
     console.error(e); 
     // -- LOGGING --
-    await logHeygenApiCall({
-        chat_session_id: session_id,
-        heygen_api_endpoint: 'streaming.stop',
-        http_status_code: 500,
-        request_payload: { session_id },
-        response_payload: { error: e.message },
-        notes: 'Endpoint failed due to an exception.'
+    const t = e?._timing || {};
+    await logThirdPartyError({
+      service_by: 'heygen',
+      provider_endpoint: 'streaming.stop',
+      chat_session_id: session_id,
+      http_status_code: 500,
+      error_message: e?.message || 'Exception in streaming.stop',
+      request_payload: { session_id },
+      response_payload: {},
+      elapsed_ms: t.elapsed_ms ?? null,
+      started_at: t.started_at ?? null,
+      finished_at: t.finished_at ?? null
     });
+    
     res.status(500).json({ error: "Failed to stop session" }); 
   } 
 });
