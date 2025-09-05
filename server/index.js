@@ -74,34 +74,42 @@ const wss = new WebSocketServer({ server });
 
 wss.on('connection', (ws) => {
   console.log('Client connected for STT streaming with Deepgram');
-  
-  const deepgramConnection = deepgramClient.listen.live({
+
+  const connectStarted = Date.now();
+  let lastAudioChunkSentAt = null;
+  let sessionId = null; // reuse your chat_session_id if you pass it from client
+
+  const dg = deepgramClient.listen.live({
     model: 'nova-3',
     language: 'multi',
     punctuate: true,
     interim_results: true,
     smart_format: true,
-    endpointing: 100, // Recommended for code-switching
+    endpointing: 100,
     encoding: 'linear16',
     sample_rate: 16000,
   });
 
   let keepAlive;
 
-  deepgramConnection.on(LiveTranscriptionEvents.Open, () => {
+  dg.on(LiveTranscriptionEvents.Open, async () => {
+    const opened = Date.now();
     console.log('✓ Deepgram connection opened.');
+    keepAlive = setInterval(() => { if (dg.getReadyState() === 1) dg.keepAlive(); }, 10_000);
 
-    // Keep the connection alive
-    keepAlive = setInterval(() => {
-        if (deepgramConnection.getReadyState() === 1) { // 1 = OPEN
-            deepgramConnection.keepAlive();
-        }
-    }, 10 * 1000);
+    // Log handshake timing
+    await logDeepgramApiCall({
+      chat_session_id: sessionId,
+      deepgram_api_endpoint: 'listen.live.open',
+      elapsed_ms: opened - connectStarted,
+      started_at: nowIso(connectStarted),
+      finished_at: nowIso(opened),
+      notes: 'WebSocket handshake open'
+    });
 
-    deepgramConnection.on(LiveTranscriptionEvents.Transcript, (data) => {
-      const transcript = data.channel.alternatives[0].transcript;
+    dg.on(LiveTranscriptionEvents.Transcript, async (data) => {
+      const transcript = data.channel.alternatives?.[0]?.transcript || "";
       if (transcript && ws.readyState === ws.OPEN) {
-        // Re-format the response to match the client's expected structure
         const response = {
           results: [{
             alternatives: [{ transcript }],
@@ -110,41 +118,93 @@ wss.on('connection', (ws) => {
         };
         ws.send(JSON.stringify(response));
       }
+
+      // Approximate latency: time since last audio chunk was sent
+      const finished = Date.now();
+      const elapsed = lastAudioChunkSentAt ? (finished - lastAudioChunkSentAt) : null;
+
+      await logDeepgramApiCall({
+        chat_session_id: sessionId,
+        deepgram_api_endpoint: 'listen.live.transcript',
+        elapsed_ms: elapsed,
+        started_at: lastAudioChunkSentAt ? nowIso(lastAudioChunkSentAt) : null,
+        finished_at: nowIso(finished),
+        response_payload: { is_final: data.is_final, transcript_len: transcript.length },
+        notes: data.is_final ? 'final' : 'interim'
+      });
     });
 
-    deepgramConnection.on(LiveTranscriptionEvents.Error, (err) => {
+    dg.on(LiveTranscriptionEvents.Error, async (err) => {
       console.error('!!! DEEPGRAM STT STREAM ERROR:', err);
+
+      const e = {
+        service_by: 'deepgram',
+        provider_endpoint: 'listen.live',
+        chat_session_id: sessionId,
+        http_status_code: null,
+        error_code: err?.code || null,
+        error_type: 'websocket_error',
+        error_param: null,
+        error_message: err?.message || String(err),
+        request_id: null,
+        request_payload: {},
+        response_payload: err,
+        stack_trace: err?.stack || null
+      };
+      await logThirdPartyError(e); // stored in third_party_api_error_log
     });
 
-    deepgramConnection.on(LiveTranscriptionEvents.Close, () => {
+    dg.on(LiveTranscriptionEvents.Close, async () => {
       console.log('Deepgram connection closed.');
       clearInterval(keepAlive);
+      await logDeepgramApiCall({
+        chat_session_id: sessionId,
+        deepgram_api_endpoint: 'listen.live.close',
+        notes: 'WebSocket closed by server/client'
+      });
     });
   });
 
   ws.on('message', (message) => {
-    // Forward audio data to Deepgram
-    if (deepgramConnection.getReadyState() === 1) { // 1 = OPEN
-      deepgramConnection.send(message);
+    if (dg.getReadyState() === 1) {
+      lastAudioChunkSentAt = Date.now();
+      dg.send(message);
     }
   });
 
   ws.on('close', () => {
     console.log('Client disconnected from WebSocket.');
-    if (deepgramConnection.getReadyState() === 1) {
-      deepgramConnection.finish();
-    }
+    if (dg.getReadyState() === 1) dg.finish();
     clearInterval(keepAlive);
   });
 
   ws.on('error', (err) => {
     console.error('!!! WebSocket server error:', err.message);
-    if (deepgramConnection.getReadyState() === 1) {
-      deepgramConnection.finish();
-    }
+    if (dg.getReadyState() === 1) dg.finish();
     clearInterval(keepAlive);
   });
 });
+
+
+function nowIso(dt) {
+  // Convert ms epoch to MySQL DATETIME (UTC)
+  const d = new Date(dt);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+}
+
+async function timeIt(asyncFn) {
+  const started = Date.now();
+  try {
+    const result = await asyncFn();
+    const finished = Date.now();
+    return { ok: true, result, elapsed_ms: finished - started, started_at: nowIso(started), finished_at: nowIso(finished) };
+  } catch (error) {
+    const finished = Date.now();
+    error._timing = { elapsed_ms: finished - started, started_at: nowIso(started), finished_at: nowIso(finished) };
+    throw error;
+  }
+}
 
 // Normalize OpenAI (and fetch) errors to a consistent shape
 function normalizeOpenAIError(err) {
@@ -202,18 +262,33 @@ async function logThirdPartyError({
 
 
 // -- NEW -- Helper function to log all HeyGen API calls to the database
-async function logHeygenApiCall({ chat_session_id, heygen_api_endpoint, http_status_code, request_payload, response_payload, notes = '' }) {
+async function logHeygenApiCall({
+  chat_session_id,
+  heygen_api_endpoint,
+  http_status_code,
+  request_payload,
+  response_payload,
+  notes = '',
+  elapsed_ms = null,
+  started_at = null,
+  finished_at = null
+}) {
   if (!chat_session_id || !heygen_api_endpoint) {
     console.error("!!! logHeygenApiCall: Missing required fields (chat_session_id, heygen_api_endpoint)");
     return;
   }
   try {
     await db.execute(
-      'INSERT INTO `heygen_api_log` (chat_session_id, heygen_api_endpoint, http_status_code, request_payload, response_payload, notes) VALUES (?, ?, ?, ?, ?, ?)',
+      `INSERT INTO \`heygen_api_log\`
+       (chat_session_id, heygen_api_endpoint, http_status_code, elapsed_ms, started_at, finished_at, request_payload, response_payload, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         chat_session_id,
         heygen_api_endpoint,
         http_status_code,
+        elapsed_ms,
+        started_at,
+        finished_at,
         JSON.stringify(request_payload || {}),
         JSON.stringify(response_payload || {}),
         notes
@@ -222,6 +297,40 @@ async function logHeygenApiCall({ chat_session_id, heygen_api_endpoint, http_sta
     console.log(`✓ Logged HeyGen API call for session ${chat_session_id}: ${heygen_api_endpoint}`);
   } catch (dbError) {
     console.error(`!!! FAILED to log HeyGen API call for session ${chat_session_id}:`, dbError.message);
+  }
+}
+
+//Deepgram logger + use it in the WS flow
+async function logDeepgramApiCall({
+  chat_session_id,
+  deepgram_api_endpoint,
+  http_status_code = null,
+  elapsed_ms = null,
+  started_at = null,
+  finished_at = null,
+  request_payload = null,
+  response_payload = null,
+  notes = ''
+}) {
+  try {
+    await db.execute(
+      `INSERT INTO \`deepgram_api_log\`
+       (chat_session_id, deepgram_api_endpoint, http_status_code, elapsed_ms, started_at, finished_at, request_payload, response_payload, notes)
+       VALUES (?, ?, ?, ?, ?, ?, CAST(? AS JSON), CAST(? AS JSON), ?)`,
+      [
+        chat_session_id,
+        deepgram_api_endpoint,
+        http_status_code,
+        elapsed_ms,
+        started_at,
+        finished_at,
+        JSON.stringify(request_payload || {}),
+        JSON.stringify(response_payload || {}),
+        notes
+      ]
+    );
+  } catch (e) {
+    console.error("!!! FAILED to log Deepgram event:", e.message);
   }
 }
 
@@ -496,15 +605,16 @@ app.post("/api/heygen/session", async (req, res) => {
       ...(voice_id ? { voice_id } : {}) 
     };
 
-    const rNew = await fetch("https://api.heygen.com/v1/streaming.new", { 
-      method: "POST", 
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.HEYGEN_API_KEY}` }, 
-      body: JSON.stringify(requestBodyNew) 
-    });
+    const timedNew = await timeIt(() => fetch("https://api.heygen.com/v1/streaming.new", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.HEYGEN_API_KEY}` },
+      body: JSON.stringify(requestBodyNew)
+    }));
 
+    const rNew = timedNew.result;
     const newJson = await rNew.json();
     const d = newJson?.data;
-    sessionIdForLogging = d?.session_id || 'UNKNOWN'; // Update session ID once we have it
+    sessionIdForLogging = d?.session_id || 'UNKNOWN';
 
     // -- LOGGING -- Log the 'streaming.new' call
     await logHeygenApiCall({
@@ -513,8 +623,26 @@ app.post("/api/heygen/session", async (req, res) => {
       http_status_code: rNew.status,
       request_payload: requestBodyNew,
       response_payload: newJson,
-      notes: rNew.ok ? 'Session created.' : 'Failed to create session.'
+      notes: rNew.ok ? 'Session created.' : 'Failed to create session.',
+      elapsed_ms: timedNew.elapsed_ms,
+      started_at: timedNew.started_at,
+      finished_at: timedNew.finished_at
     });
+
+    if (!rNew.ok) {
+      await logThirdPartyError({
+        service_by: 'heygen',
+        provider_endpoint: 'streaming.new',
+        chat_session_id: sessionIdForLogging,
+        http_status_code: rNew.status,
+        error_message: (newJson && newJson.error) ? JSON.stringify(newJson.error) : 'Non-200 response',
+        request_payload: requestBodyNew,
+        response_payload: newJson,
+        elapsed_ms: timedNew.elapsed_ms,
+        started_at: timedNew.started_at,
+        finished_at: timedNew.finished_at
+      });
+    }
 
     if (!d?.url || !d?.access_token || !d?.session_id) { 
       console.error("Unexpected HeyGen response", newJson); 
