@@ -1,4 +1,6 @@
-//This contains the logic for the primary /api/talk endpoint.
+//
+// server/routes/talkRoutes.js
+//
 import express from "express";
 import db from '../config/db.js';
 import { planReply, generateChatTitle } from '../services/openAIService.js';
@@ -25,7 +27,7 @@ router.post("/", async (req, res) => {
     ]).filter(msg => msg.content);
     const isFirstMessage = history.length === 0;
 
-    const { speech_text, ui_action, tokens, model, openai_log_id } = await planReply(userText, history, chat_session_id);
+    const { speech_text, hindi_line, ui_action, tokens, model, openai_log_id } = await planReply(userText, history, chat_session_id);
 
     const [insertResult] = await db.execute(
       `INSERT INTO \`chats\`
@@ -92,7 +94,7 @@ router.post("/", async (req, res) => {
       console.error("HeyGen call failed:", e);
     }
     
-    res.json({ spoke: speech_text, ui: ui_action });
+    res.json({ spoke: speech_text, ui: ui_action, hindi_line: hindi_line });
 
   } catch (e) {
     console.error("Talk endpoint failed:", e);

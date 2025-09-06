@@ -1,3 +1,6 @@
+//
+// client/src/App.jsx
+//
 import { useEffect, useRef, useState } from "react";
 import { Room, RoomEvent } from "livekit-client";
 
@@ -51,6 +54,7 @@ export default function App() {
   const [isSessionActive, setIsSessionActive] = useState(true);
   const [isMicOn, setIsMicOn] = useState(true);
   const [isVideoOn, setIsVideoOn] = useState(true);
+  const [hindiLine, setHindiLine] = useState("");
   
   const userVideoRef = useRef(null);
   const userStreamRef = useRef(null);
@@ -108,6 +112,7 @@ export default function App() {
         const transcript = data.results?.[0]?.alternatives?.[0]?.transcript;
         if (!transcript) return;
         if (data.results[0].isFinal) {
+            setHindiLine("");
             accumulatedFinalTranscript += transcript + " ";
             setInterimTranscript("");
             clearTimeout(finalTranscriptTimeout);
@@ -196,6 +201,9 @@ export default function App() {
       if (data.spoke) {
         setConversation(prev => [...prev, { speaker: 'AI', text: data.spoke }]);
       }
+      if (data.hindi_line) {
+        setHindiLine(data.hindi_line);
+      }
     } catch (e) { console.error("sendToLLM fetch error:", e); }
   }
   
@@ -246,6 +254,8 @@ export default function App() {
         @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(52, 168, 83, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(52, 168, 83, 0); } 100% { box-shadow: 0 0 0 0 rgba(52, 168, 83, 0); } }
         .backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 19; opacity: 0; transition: opacity 0.3s ease-in-out; pointer-events: none; }
         .backdrop.open { opacity: 1; pointer-events: auto; }
+        .hindi-overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background-color: rgba(0, 0, 0, 0.75); padding: 2rem; border-radius: 12px; z-index: 15; text-align: center; max-width: 90%; pointer-events: none; }
+        .hindi-overlay p { margin: 0; font-size: clamp(1.5rem, 4vw, 3rem); line-height: 1.4; color: white; }
 
         @media (min-width: 769px) { .backdrop { display: none; } }
         @media (max-width: 768px) {
@@ -274,6 +284,11 @@ export default function App() {
         </div>
 
         <div className="ai-video-container">
+          {hindiLine && (
+            <div className="hindi-overlay">
+              <p>{hindiLine}</p>
+            </div>
+          )}
           <div ref={videoRef} style={{width: "100%", height: "100%"}} />
           <div className="ui-overlays">
             <div className="top-bar">

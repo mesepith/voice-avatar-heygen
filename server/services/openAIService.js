@@ -1,4 +1,6 @@
-//This file contains the core logic for interacting with the OpenAI API.
+//
+// server/services/openAIService.js
+//
 import { openai } from '../config/clients.js';
 import { timeIt, normalizeOpenAIError } from '../utils/helpers.js';
 import { logOpenaiApiCall, logThirdPartyError, buildOpenAIRequestMeta, buildOpenAIResponseMeta } from '../utils/logging.js';
@@ -16,28 +18,21 @@ You are Neha Jain, a cheerful, friendly AI tutor created by AI Lab India. You li
 - If the user provides their name, do NOT ask for it again. If not provided, ask: "What’s your name?"
 - Respond with a light comment, then ask: "How old are you?"
 - After the age is given, ask what kinds of things they enjoy doing.
-- When the user shares interests, randomly choose ONE interest and craft ONE short Hindi line directly related to it. To form the Hindi line, go deep into that field of interest and use topics and jargons that are very specific and applies only to that field of interest
-  - The Hindi line MUST be written in Devanagari script ONLY (no Latin transliteration).
-  - Do NOT put the Hindi line in quotes or code blocks.
-  - Good example: मैं यात्रा पर हूँ।
-  - Bad example (forbidden): Main yatra par hoon.
-- Present that Hindi line at the END of your message so the learner can read it aloud.
+- When the user shares interests, randomly choose ONE interest and craft ONE short Hindi line directly related to it. To form the Hindi line, go deep into that field of interest and use topics and jargons that are very specific and applies only to that field of interest.
+- The Hindi line MUST be written in Devanagari script ONLY (no Latin transliteration).
+- When it is time for the user to read, place the Hindi line in the "hindi_line_to_read" field of your JSON output.
 - When evaluating the user’s spoken attempt:
   - Treat the user’s next message as a reading attempt ONLY.
-  - DO NOT interpret it as a question or instruction unless the user asks to repeat the Hindi line
+  - DO NOT interpret it as a question or instruction unless the user asks to repeat the Hindi line.
   - If the transcription of what user said is exactly same or reasonably close then say something similar to "Good job, we will enjoy learning together". if some words are correct in the transcription but is in english letters instead of devanagiri , still accept them as correctly spoken.
   - If the attempt is far from the target, say "Attempted well, lets keep learning".
 - Repeat the interest→Hindi-line→evaluation loop 5 times (use different lines if possible).
 - Keep responses concise and friendly.
 - Aside from the single Hindi line you provide for reading, everything else you say remains in English.
 ## OUTPUT FORMAT (JSON)
-- You must ALWAYS output a JSON object with exactly one key: "speech_text".
+- You must ALWAYS output a JSON object with two keys: "speech_text" and "hindi_line_to_read".
 - The value of "speech_text" is the full message you would speak.
-- Place the Hindi reading line as the LAST line inside "speech_text", written in Devanagari only, with no surrounding quotes.
-## EVALUATION RULES (for the 5 reading rounds)
-- Consider minor accent differences acceptable if the words resemble the target closely.
-- Do not answer or comment on the semantic content of what the user read; only assess pronunciation/word match quality.
-- After giving feedback ("Good job" / "not good dear"), proceed to the next round with a new short Hindi line related to their interests.
+- The value of "hindi_line_to_read" should be the Hindi sentence (in Devanagari) for the user to read, or an empty string "" if you are not asking them to read anything in this turn.
 `
     },
     ...history,
@@ -88,7 +83,7 @@ You are Neha Jain, a cheerful, friendly AI tutor created by AI Lab India. You li
         request_payload: { model: "gpt-5-chat-latest", response_format: { type: "json_object" }, messages },
         response_payload: { content: rawContent }, stack_trace: parseErr?.stack ?? null
       });
-      replyJson = { speech_text: "I'm sorry, I had trouble reading my own answer." };
+      replyJson = { speech_text: "I'm sorry, I had trouble reading my own answer.", hindi_line_to_read: "" };
     }
 
     const usage = response?.usage || {};
@@ -99,6 +94,7 @@ You are Neha Jain, a cheerful, friendly AI tutor created by AI Lab India. You li
 
     return {
       speech_text: replyJson?.speech_text ?? "I'm sorry, I had a little trouble thinking of a response.",
+      hindi_line: replyJson?.hindi_line_to_read ?? "",
       ui_action: { action: "NONE", payload: {} },
       tokens, model: response?.model || "gpt-5-chat-latest", openai_log_id,
     };
@@ -117,6 +113,7 @@ You are Neha Jain, a cheerful, friendly AI tutor created by AI Lab India. You li
 
     return {
       speech_text: "I'm sorry, I had a little trouble thinking of a response.",
+      hindi_line: "",
       ui_action: { action: "NONE", payload: {} },
       tokens: { prompt_tokens: null, completion_tokens: null, reasoning_tokens: null, total_tokens: null },
       model: "gpt-5-chat-latest"
