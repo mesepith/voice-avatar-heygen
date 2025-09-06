@@ -3,3 +3,5 @@ server/.env
 server/.DS_Store
 client/.env.development
 client/.env.production
+code_dump_*.html
+code_dump_*.txt
