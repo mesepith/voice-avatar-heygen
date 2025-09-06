@@ -55,6 +55,7 @@ export default function App() {
   const [isMicOn, setIsMicOn] = useState(true);
   const [isVideoOn, setIsVideoOn] = useState(true);
   const [hindiLine, setHindiLine] = useState("");
+  const [textOptions, setTextOptions] = useState(null);
   
   const userVideoRef = useRef(null);
   const userStreamRef = useRef(null);
@@ -76,7 +77,6 @@ export default function App() {
   }, [isSessionActive]);
 
   const startSession = async () => {
-    // This function will be called to initialize a new session
     try {
       setStatus("Permissions...");
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
@@ -105,6 +105,7 @@ export default function App() {
         audioStreamerRef.current = createAudioStreamer((audioChunk) => wsRef.current?.readyState === WebSocket.OPEN && wsRef.current.send(audioChunk));
         audioStreamerRef.current.start(userStreamRef.current);
         setStatus("Listening...");
+        sendToLLM("Hello");
       };
 
       wsRef.current.onmessage = (event) => {
@@ -113,6 +114,7 @@ export default function App() {
         if (!transcript) return;
         if (data.results[0].isFinal) {
             setHindiLine("");
+            setTextOptions(null);
             accumulatedFinalTranscript += transcript + " ";
             setInterimTranscript("");
             clearTimeout(finalTranscriptTimeout);
@@ -187,7 +189,9 @@ export default function App() {
   }, [conversation, interimTranscript]);
 
   async function sendToLLM(text) {
-    if (!text || !isMicOn || !sessionDataRef.current?.session_id) return;
+    if (!text || !sessionDataRef.current?.session_id) return;
+    setHindiLine("");
+    setTextOptions(null);
     try {
       fetch(`${API_BASE_URL}/api/heygen/interrupt`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -203,6 +207,9 @@ export default function App() {
       }
       if (data.hindi_line) {
         setHindiLine(data.hindi_line);
+      }
+      if (data.ui && data.ui.action === 'DISPLAY_TEXT_OPTIONS') {
+        setTextOptions(data.ui.payload.options);
       }
     } catch (e) { console.error("sendToLLM fetch error:", e); }
   }
@@ -256,6 +263,9 @@ export default function App() {
         .backdrop.open { opacity: 1; pointer-events: auto; }
         .hindi-overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background-color: rgba(0, 0, 0, 0.75); padding: 2rem; border-radius: 12px; z-index: 15; text-align: center; max-width: 90%; pointer-events: none; }
         .hindi-overlay p { margin: 0; font-size: clamp(1.5rem, 4vw, 3rem); line-height: 1.4; color: white; }
+        .text-options-overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background-color: rgba(32, 33, 36, 0.9); backdrop-filter: blur(8px); padding: 2rem; border-radius: 16px; z-index: 25; display: flex; flex-direction: column; gap: 1.5rem; width: clamp(300px, 80vw, 600px); pointer-events: none; }
+        .text-option { display: flex; align-items: center; gap: 1rem; font-size: clamp(1.2rem, 3vw, 1.8rem); }
+        .text-option .label { font-weight: bold; color: #8ab4f8; }
 
         @media (min-width: 769px) { .backdrop { display: none; } }
         @media (max-width: 768px) {
@@ -287,6 +297,16 @@ export default function App() {
           {hindiLine && (
             <div className="hindi-overlay">
               <p>{hindiLine}</p>
+            </div>
+          )}
+          {textOptions && (
+            <div className="text-options-overlay">
+              {textOptions.map((option) => (
+                <div key={option.label} className="text-option">
+                  <span className="label">{option.label}.</span>
+                  <span className="text">{option.text}</span>
+                </div>
+              ))}
             </div>
           )}
           <div ref={videoRef} style={{width: "100%", height: "100%"}} />
