@@ -57,7 +57,7 @@ You are Neha Jain, a cheerful, friendly AI tutor created by AI Lab India. You li
       )
     );
     const response = timed.result;
-    console.log('------- end to send open ai -------');
+    console.log('------- end to send open ai, took: '+timed.elapsed_ms+' ms -------');
 
     let openai_log_id = null;
     const rawContent = response?.choices?.[0]?.message?.content ?? "{}";
