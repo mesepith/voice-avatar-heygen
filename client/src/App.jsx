@@ -98,8 +98,7 @@ export default function App() {
       roomRef.current.on(RoomEvent.TrackSubscribed, (track) => videoRef.current?.appendChild(track.attach()));
       
       wsRef.current = new WebSocket(WS_URL);
-      let accumulatedFinalTranscript = "";
-      let finalTranscriptTimeout;
+      let accumulatedTranscript = "";
 
       wsRef.current.onopen = () => {
         audioStreamerRef.current = createAudioStreamer((audioChunk) => wsRef.current?.readyState === WebSocket.OPEN && wsRef.current.send(audioChunk));
@@ -111,23 +110,28 @@ export default function App() {
       wsRef.current.onmessage = (event) => {
         const data = JSON.parse(event.data);
         const transcript = data.results?.[0]?.alternatives?.[0]?.transcript;
+        const isFinal = data.results[0].isFinal;
+        const speechFinal = data.results[0].speechFinal;
+
         if (!transcript) return;
-        if (data.results[0].isFinal) {
+
+        if (isFinal) {
+            accumulatedTranscript += transcript + " ";
+        }
+        
+        setInterimTranscript(accumulatedTranscript + (isFinal ? "" : transcript));
+
+        if (speechFinal && accumulatedTranscript.trim()) {
+            const fullUtterance = accumulatedTranscript.trim();
+            
             setHindiLine("");
             setTextOptions(null);
-            accumulatedFinalTranscript += transcript + " ";
+
+            setConversation(prev => [...prev, { speaker: 'User', text: fullUtterance }]);
+            sendToLLM(fullUtterance);
+
+            accumulatedTranscript = "";
             setInterimTranscript("");
-            clearTimeout(finalTranscriptTimeout);
-            finalTranscriptTimeout = setTimeout(() => {
-                if (accumulatedFinalTranscript.trim()) {
-                    const fullUtterance = accumulatedFinalTranscript.trim();
-                    setConversation(prev => [...prev, { speaker: 'User', text: fullUtterance }]);
-                    sendToLLM(fullUtterance);
-                    accumulatedFinalTranscript = ""; 
-                }
-            }, 800); 
-        } else {
-            setInterimTranscript(accumulatedFinalTranscript + transcript);
         }
       };
       wsRef.current.onclose = () => setStatus("Disconnected");

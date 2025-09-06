@@ -1,4 +1,6 @@
-//This file is dedicated to managing the WebSocket server and its communication with Deepgram.
+//
+// server/services/webSocketService.js
+//
 import { WebSocketServer } from "ws";
 import { LiveTranscriptionEvents } from "@deepgram/sdk";
 import { deepgramClient } from "../config/clients.js";
@@ -36,7 +38,13 @@ export function initializeWebSocket(server) {
       dg.on(LiveTranscriptionEvents.Transcript, async (data) => {
         const transcript = data.channel.alternatives?.[0]?.transcript || "";
         if (transcript && ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify({ results: [{ alternatives: [{ transcript }], isFinal: data.is_final }] }));
+          ws.send(JSON.stringify({
+            results: [{
+              alternatives: [{ transcript }],
+              isFinal: data.is_final,
+              speechFinal: data.speech_final
+            }]
+          }));
         }
 
         const finished = Date.now();
