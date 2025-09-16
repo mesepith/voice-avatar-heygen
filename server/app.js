@@ -7,7 +7,8 @@ const app = express();
 
 const allowedOrigins = [
   'http://localhost:5173',
-  'https://demo2.zahiralam.com'
+  'https://demo2.zahiralam.com',
+  'https://demo1.taiboli.in'
 ];
 
 const corsOptions = {
