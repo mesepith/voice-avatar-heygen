@@ -9,21 +9,21 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787
 const WS_URL = API_BASE_URL.replace(/^http/, 'ws');
 
 // --- SVG Icon Components ---
-const Icon = ({ path }) => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+const Icon = ({ path, size = 24 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
     <path d={path} />
   </svg>
 );
-const TranscriptionIcon = () => <Icon path="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z" />;
-const VolumeUpIcon = () => <Icon path="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />;
-const FlipCameraIcon = () => <Icon path="M20 4h-3.17L15 2H9L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-5 11.5V13H9v2.5L5.5 12 9 8.5V11h6V8.5l3.5 3.5-3.5 3.5z" />;
-const VideoOnIcon = () => <Icon path="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z" />;
-const VideoOffIcon = () => <Icon path="M21 6.5l-4 4V7c0-.55-.45-1-1-1H9.82L21 17.18V6.5zM3.27 2L2 3.27 4.73 6H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.21 0 .39-.08.55-.18L19.73 21 21 19.73 3.27 2z" />;
-const MicOnIcon = () => <Icon path="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.49 6-3.31 6-6.72h-1.7z" />;
-const MicOffIcon = () => <Icon path="M19 11h-1.7c0 .74-.29 1.43-.78 1.98l1.46 1.46C18.68 13.3 19 12.19 19 11zm-8-6c1.66 0 3 1.34 3 3v1.58l-3-3V5zm-4 0v.58l13.42 13.42-1.41 1.41L2.01 3.41 3.42 2l3.16 3.16C6.71 5.23 6.88 5.11 7.06 5H7c0-1.66 1.34-3 3-3 .23 0 .44.03.65.08L12 2.72V2h-2v.72C7.28.2 5 2.82 5 5.5V11c0 .35.04.69.12 1.02l-1.7 1.7C3.16 12.28 3 11.66 3 11v-1c0-3.41 2.72-6.23 6-6.72V1h2v2.28c.47.07.92.22 1.34.4L12 6.42V6c0-1.66-1.34-3-3-3z" />;
-const HangUpIcon = () => <Icon path="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.1-2.66 1.82-.08.08-.18.11-.28.11s-.2-.03-.28-.11l-1.4-1.4a.42.42 0 0 1 0-.6c1.02-1.09 2.2-1.99 3.48-2.66.33-.17.54-.51.54-.88V7.07C5.86 8.52 4.05 10.68 4.05 12c0 1.32.84 2.87 2.02 4.02l1.41 1.41c.08.08.18.11.28.11s.2-.03.28-.11C9.12 16.44 10.68 15 12 15c.67 0 1.29-.14 1.86-.39.2-.09.28-.33.18-.53l-1.02-1.9c-.11-.22-.38-.28-.58-.17-1.15.59-2.48.9-3.44.9-1.2 0-2.68-.61-3.62-1.55.93-.93 2.42-1.55 3.62-1.55 1.05 0 2.28.35 3.53 1.03.17.09.38.03.48-.13l1.04-1.68c.13-.21.07-.49-.13-.62C14.77 9.39 13.43 9 12 9z" />;
-const CloseIcon = () => <Icon path="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" />;
-const ReplayIcon = () => <Icon path="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z" />;
+const TranscriptionIcon = ({ size }) => <Icon path="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z" size={size} />;
+const MicOnIcon = ({ size }) => <Icon path="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.49 6-3.31 6-6.72h-1.7z" size={size} />;
+const MicOffIcon = ({ size }) => <Icon path="M19 11h-1.7c0 .74-.29 1.43-.78 1.98l1.46 1.46C18.68 13.3 19 12.19 19 11zm-8-6c1.66 0 3 1.34 3 3v1.58l-3-3V5zm-4 0v.58l13.42 13.42-1.41 1.41L2.01 3.41 3.42 2l3.16 3.16C6.71 5.23 6.88 5.11 7.06 5H7c0-1.66 1.34-3 3-3 .23 0 .44.03.65.08L12 2.72V2h-2v.72C7.28.2 5 2.82 5 5.5V11c0 .35.04.69.12 1.02l-1.7 1.7C3.16 12.28 3 11.66 3 11v-1c0-3.41 2.72-6.23 6-6.72V1h2v2.28c.47.07.92.22 1.34.4L12 6.42V6c0-1.66-1.34-3-3-3z" size={size} />;
+const HangUpIcon = ({ size }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" style={{ transform: 'rotate(135deg)' }}>
+    <path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56-.35-.12-.74-.03-1.01.24l-2.2 2.2c-2.83-1.44-5.15-3.75-6.59-6.59l2.2-2.21c.28-.26.36-.65.25-1C8.7 6.42 8.5 5.21 8.5 4c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1 0 9.39 7.61 17 17 17 .55 0 1-.45 1-1v-3.5c0-.55-.45-1-1-1z" />
+  </svg>
+);
+const CloseIcon = ({ size }) => <Icon path="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" size={size} />;
+const ReplayIcon = ({ size }) => <Icon path="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z" size={size} />;
 
 // --- Audio Streamer Helper ---
 const createAudioStreamer = (onAudio) => {
@@ -222,7 +222,7 @@ export default function App() {
     return (
       <div className="start-again-container">
           <button className="icon-button start-again-button" onClick={() => window.location.reload()}>
-              <ReplayIcon />
+              <ReplayIcon size={32} />
           </button>
           <span>Start Again</span>
       </div>
@@ -243,10 +243,11 @@ export default function App() {
         .top-bar, .bottom-bar { position: absolute; left: 16px; right: 16px; display: flex; align-items: center; pointer-events: auto; }
         .top-bar { top: 16px; justify-content: space-between; }
         .bottom-bar { bottom: 16px; justify-content: center; }
-        .top-left, .top-right { display: flex; align-items: center; gap: 8px; }
+        .top-left { display: flex; align-items: center; gap: 8px; }
         .icon-button { background: rgba(60, 64, 67, 0.8); border: none; border-radius: 50%; width: 48px; height: 48px; display: flex; justify-content: center; align-items: center; color: white; cursor: pointer; backdrop-filter: blur(4px); }
         .icon-button:hover { background: rgba(80, 84, 87, 0.9); }
-        .controls-container { background: rgba(32, 33, 36, 0.9); border-radius: 30px; padding: 8px; display: flex; gap: 8px; backdrop-filter: blur(8px); }
+        .large-icon-button { width: 56px; height: 56px; }
+        .controls-container { background: rgba(32, 33, 36, 0.9); border-radius: 30px; padding: 8px; display: flex; gap: 12px; backdrop-filter: blur(8px); }
         .hangup-button { background-color: #ea4335; }
         .hangup-button:hover { background-color: #f06a5e; }
         .user-video-pip { position: absolute; right: 16px; bottom: var(--pip-bottom-margin); width: clamp(150px, 22vw, 280px); border-radius: 12px; border: 2px solid rgba(255, 255, 255, 0.2); box-shadow: 0 4px 15px rgba(0,0,0,0.3); z-index: 10; overflow: hidden; pointer-events: auto; }
@@ -319,10 +320,6 @@ export default function App() {
               <div className="top-left">
                 <button className="icon-button" onClick={() => setShowTranscription(true)}><TranscriptionIcon /></button>
               </div>
-              <div className="top-right">
-                <button className="icon-button"><VolumeUpIcon /></button>
-                <button className="icon-button"><FlipCameraIcon /></button>
-              </div>
             </div>
             
             <div className="user-video-pip" style={{ display: isVideoOn ? 'block' : 'none' }}>
@@ -335,14 +332,11 @@ export default function App() {
                   <div className={`status-dot ${isMicOn && status === 'Listening...' ? 'listening' : ''}`}></div>
                   <span>{isMicOn ? (status === 'Listening...' ? 'Listening' : status) : 'Muted'}</span>
                 </div>
-                <button className="icon-button" onClick={handleToggleVideo}>
-                    {isVideoOn ? <VideoOnIcon /> : <VideoOffIcon />}
+                <button className="icon-button large-icon-button" onClick={handleToggleMic}>
+                    {isMicOn ? <MicOnIcon size={28} /> : <MicOffIcon size={28} />}
                 </button>
-                <button className="icon-button" onClick={handleToggleMic}>
-                    {isMicOn ? <MicOnIcon /> : <MicOffIcon />}
-                </button>
-                <button className="icon-button hangup-button" onClick={() => endSession(true)}>
-                    <HangUpIcon />
+                <button className="icon-button hangup-button large-icon-button" onClick={() => endSession(true)}>
+                    <HangUpIcon size={32} />
                 </button>
               </div>
             </div>
