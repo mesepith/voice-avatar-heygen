@@ -20,6 +20,7 @@ export default function App() {
     interimTranscript,
     hindiLine,
     textOptions,
+    isLayoutShifted, // Get the new state from the hook
     endSession,
     handleToggleMic,
     handleToggleVideo,
@@ -30,7 +31,7 @@ export default function App() {
   }
 
   return (
-    <div className="app-container">
+    <div className={`app-container ${isLayoutShifted ? "layout-shifted" : ""}`}>
       {showTranscription && (
         <div
           className="backdrop open"

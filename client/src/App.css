@@ -42,7 +42,18 @@ body {
   align-items: center;
   justify-content: center;
   position: relative;
+  transition: all 0.5s ease-in-out;
 }
+
+.ai-video-wrapper {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  transition: all 0.5s ease-in-out;
+}
+
 .ai-video-container video {
   width: 100%;
   height: 100%;
@@ -123,6 +134,7 @@ body {
   z-index: 10;
   overflow: hidden;
   pointer-events: auto;
+  transition: all 0.5s ease-in-out;
 }
 .user-video-pip video {
   width: 100%;
@@ -130,6 +142,32 @@ body {
   transform: scaleX(-1);
   display: block;
 }
+
+.app-container.layout-shifted .ai-video-container {
+  justify-content: center;
+  align-items: flex-end;
+  gap: 20px;
+  padding-bottom: var(--pip-bottom-margin);
+}
+
+.app-container.layout-shifted .ai-video-wrapper {
+  width: clamp(150px, 22vw, 280px);
+  height: auto;
+  aspect-ratio: 16/9;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+}
+
+.app-container.layout-shifted .user-video-pip {
+  position: relative;
+  right: auto;
+  bottom: auto;
+  width: clamp(150px, 22vw, 280px);
+  height: auto;
+  aspect-ratio: 16/9;
+}
+
 .transcription-panel {
   background: #202124;
   width: min(400px, 90vw);
@@ -292,5 +330,16 @@ body {
     left: 8px;
     right: 8px;
     bottom: 8px;
+  }
+
+  .app-container.layout-shifted .ai-video-container {
+    flex-direction: column;
+    padding-bottom: 16px;
+    justify-content: flex-end;
+  }
+
+  .app-container.layout-shifted .ai-video-wrapper,
+  .app-container.layout-shifted .user-video-pip {
+     width: clamp(120px, 35vw, 180px);
   }
 }

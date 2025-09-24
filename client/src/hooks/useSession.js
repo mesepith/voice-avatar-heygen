@@ -11,6 +11,7 @@ export default function useSession() {
   const [conversation, setConversation] = useState([]);
   const [hindiLine, setHindiLine] = useState("");
   const [textOptions, setTextOptions] = useState(null);
+  const [isLayoutShifted, setIsLayoutShifted] = useState(false); // New state for persistent layout
 
   const userVideoRef = useRef(null);
   const userStreamRef = useRef(null);
@@ -24,6 +25,7 @@ export default function useSession() {
     if (aiData.hindi_line) setHindiLine(aiData.hindi_line);
     if (aiData.ui && aiData.ui.action === "DISPLAY_TEXT_OPTIONS") {
       setTextOptions(aiData.ui.payload.options);
+      setIsLayoutShifted(true); // Set layout to shifted and keep it that way
     }
   };
 
@@ -134,6 +136,7 @@ export default function useSession() {
     interimTranscript,
     hindiLine,
     textOptions,
+    isLayoutShifted, // Expose the new state
     endSession,
     handleToggleMic,
     handleToggleVideo,
