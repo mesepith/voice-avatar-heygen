@@ -57,7 +57,6 @@ find . \
       -path "./client/index.html" -o \
       -path "./client/package.json" -o \
       -path "./client/vite.config.js" -o \
-      -path "./client/src/App.css" -o \
       -path "./client/src/index.css" -o \
       -path "./client/src/main.jsx" -o \
       -path "./client/src/assets/react.svg" -o \
