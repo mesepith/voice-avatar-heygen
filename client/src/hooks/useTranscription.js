@@ -10,10 +10,23 @@ export default function useTranscription({ onTranscriptFinalized }) {
   const [interimTranscript, setInterimTranscript] = useState("");
   const wsRef = useRef(null);
   const audioStreamerRef = useRef(null);
+  const speechTimeoutRef = useRef(null); // To hold the timeout ID for the fallback
 
   const startTranscription = (stream, sessionId, onAIResponse) => {
     wsRef.current = new WebSocket(WS_URL);
     let accumulatedTranscript = "";
+
+    const sendFinalUtterance = () => {
+      // It's possible for interimTranscript to hold the last few words
+      const fullUtterance = (accumulatedTranscript + interimTranscript).trim();
+
+      if (fullUtterance) {
+        onTranscriptFinalized(fullUtterance); // Update UI with user's final words
+        sendToLLM(fullUtterance, sessionId).then(onAIResponse); // Get AI response
+        accumulatedTranscript = "";
+        setInterimTranscript("");
+      }
+    };
 
     wsRef.current.onopen = () => {
       audioStreamerRef.current = createAudioStreamer(
@@ -34,23 +47,42 @@ export default function useTranscription({ onTranscriptFinalized }) {
 
       if (!transcript) return;
 
-      if (isFinal) {
-        accumulatedTranscript += transcript + " ";
+      // Always clear the previous fallback timer when new data arrives
+      if (speechTimeoutRef.current) {
+        clearTimeout(speechTimeoutRef.current);
       }
 
-      setInterimTranscript(accumulatedTranscript + (isFinal ? "" : transcript));
+      if (isFinal) {
+        accumulatedTranscript += transcript + " ";
+        setInterimTranscript(""); // This part is final, clear the interim display
+      } else {
+        setInterimTranscript(transcript); // Update interim display with the latest part
+      }
 
-      if (speechFinal && accumulatedTranscript.trim()) {
-        const fullUtterance = accumulatedTranscript.trim();
-        onTranscriptFinalized(fullUtterance); // Update UI with user's final words
-        sendToLLM(fullUtterance, sessionId).then(onAIResponse); // Get AI response
-        accumulatedTranscript = "";
-        setInterimTranscript("");
+      // PRIMARY MECHANISM: If speechFinal is true, send immediately.
+      if (speechFinal) {
+        console.log("`speechFinal` received. Sending to backend.");
+        sendFinalUtterance();
+        return; // The utterance is sent, no need to set a fallback timer.
+      }
+
+      // FALLBACK MECHANISM: If speechFinal is not received, set a timer.
+      // It will fire if no new words come in after 3 seconds.
+      const currentUtterance = (accumulatedTranscript + transcript).trim();
+      if (currentUtterance) {
+        speechTimeoutRef.current = setTimeout(() => {
+          console.warn("3-second fallback timer triggered. Sending to backend.");
+          sendFinalUtterance();
+        }, 3000); // 3-second delay
       }
     };
   };
 
   const stopTranscription = () => {
+    // Clear any pending timeout when stopping.
+    if (speechTimeoutRef.current) {
+      clearTimeout(speechTimeoutRef.current);
+    }
     wsRef.current?.close();
     audioStreamerRef.current?.stop();
   };
