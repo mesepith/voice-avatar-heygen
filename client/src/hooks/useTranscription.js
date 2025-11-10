@@ -67,13 +67,13 @@ export default function useTranscription({ onTranscriptFinalized }) {
       }
 
       // FALLBACK MECHANISM: If speechFinal is not received, set a timer.
-      // It will fire if no new words come in after 3 seconds.
+      // It will fire if no new words come in after 500 milliseconds.
       const currentUtterance = (accumulatedTranscript + transcript).trim();
       if (currentUtterance) {
         speechTimeoutRef.current = setTimeout(() => {
-          console.warn("3-second fallback timer triggered. Sending to backend.");
+          console.warn("500 millisecond fallback timer triggered. Sending to backend.");
           sendFinalUtterance();
-        }, 3000); // 3-second delay
+        }, 500); // 500-millisecond delay
       }
     };
   };
