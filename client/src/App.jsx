@@ -7,6 +7,9 @@ import TranscriptionPanel from "./components/TranscriptionPanel";
 import StartScreen from "./components/StartScreen";
 import "./App.css";
 
+/*
+@author: Zahir
+*/
 export default function App() {
   const [showTranscription, setShowTranscription] = useState(false);
   const {
