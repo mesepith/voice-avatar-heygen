@@ -9,6 +9,7 @@ import "./App.css";
 
 /*
 @author: Zahir
+@description: Main application component that manages the video call session, controls, and transcription features
 */
 export default function App() {
   const [showTranscription, setShowTranscription] = useState(false);
